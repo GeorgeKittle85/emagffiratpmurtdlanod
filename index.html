@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>TARIFF WARS 2025 — Mobile</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden; touch-action: none;
+      background: #0a0a1a;
+      position: fixed; top: 0; left: 0;
+      font-family: -apple-system, sans-serif;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none;
+    }
+    canvas {
+      display: block; width: 100%; height: 100%;
+      position: fixed; top: 0; left: 0;
+    }
+    #nameInput {
+      position: fixed; top: -200px; left: -200px;
+      opacity: 0; font-size: 16px;
+      width: 1px; height: 1px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <input type="text" id="nameInput" maxlength="20" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+  <script>
+// ── DEPLOY ON GITHUB PAGES ──────────────────────────────────────
+// 1. Create a repo (or use existing one)
+// 2. Drop this file in as index.html (or any .html filename)
+// 3. Go to repo Settings → Pages → Source: main branch / root
+// 4. Your game is live at https://[username].github.io/[repo]/
+// No build step. No dependencies. Just HTML.
+// MOBILE VERSION — optimized for iPhone & iPad touch controls
+// ────────────────────────────────────────────────────────────────
+
+const canvas = document.getElementById(‘gameCanvas’);
+const ctx = canvas.getContext(‘2d’);
+const nameInput = document.getElementById(‘nameInput’);
+
+// Prevent ALL default touch behavior
+document.addEventListener(‘touchmove’, e => e.preventDefault(), { passive: false });
+document.addEventListener(‘gesturestart’, e => e.preventDefault());
+document.addEventListener(‘gesturechange’, e => e.preventDefault());
+document.addEventListener(‘gestureend’, e => e.preventDefault());
+
+// ── RESPONSIVE CANVAS (full screen, retina-aware) ──────────────
+let W, H, DPR, S;
+function resize() {
+DPR = window.devicePixelRatio || 1;
+W = window.innerWidth;
+H = window.innerHeight;
+canvas.width = W * DPR;
+canvas.height = H * DPR;
+canvas.style.width = W + ‘px’;
+canvas.style.height = H + ‘px’;
+ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+// Scale factor for sizing elements relative to a 400px-wide baseline
+S = Math.min(W, H) / 400;
+}
+resize();
+window.addEventListener(‘resize’, resize);
+
+// ── AUDIO ──────────────────────────────────────────────────────
+let audioCtx;
+function initAudio() {
+if (!audioCtx) {
+audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// iOS requires resume inside user gesture
+if (audioCtx.state === ‘suspended’) audioCtx.resume();
+}
+}
+function playTone(freq, dur, type=‘square’, vol=0.12) {
+if (!audioCtx) return;
+try {
+if (audioCtx.state === ‘suspended’) audioCtx.resume();
+const o = audioCtx.createOscillator();
+const g = audioCtx.createGain();
+o.type = type; o.frequency.value = freq;
+g.gain.value = vol;
+g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+o.connect(g); g.connect(audioCtx.destination);
+o.start(); o.stop(audioCtx.currentTime + dur);
+} catch(e) {}
+}
+function sfxHit() { playTone(150, 0.3, ‘sawtooth’, 0.2); }
+function sfxScore() { playTone(600, 0.1); playTone(800, 0.1); }
+function sfxDeath() { playTone(100, 0.5, ‘sawtooth’, 0.3); }
+function sfxQuiet() { playTone(300, 0.15); playTone(200, 0.2); }
+function sfxTariff() { playTone(250, 0.2, ‘triangle’, 0.2); }
+function sfxICE() { playTone(500, 0.15); playTone(700, 0.1); }
+
+// ── DATA ───────────────────────────────────────────────────────
+const TRUMP_QUOTES = [
+“We’re going to win so much, you’ll be tired of winning!”,
+“Nobody builds walls better than me, believe me.”,
+“I have the best words.”,
+“It’s going to be HUGE!”,
+“We’re putting AMERICA FIRST!”,
+“The tariffs are beautiful. Absolutely beautiful.”,
+“Trade wars are good, and easy to win!”,
+“I’m like, really smart. A very stable genius.”,
+“We’re going to Make America Great Again!”,
+“Billions and billions and billions…”,
+“I know more about tariffs than anybody.”,
+“This is the greatest economy in the HISTORY of our country!”,
+“They’re not sending their best…”,
+“Fake news! FAKE NEWS!”,
+“Many people are saying it. Many, many people.”,
+“Nobody knows more about trade than me.”,
+“We will have so much winning!”,
+“Quiet, Piggy!”,
+];
+const REPORTER_QUESTIONS = [
+“Mr. President, what about the deficit?”,
+“Sir, the economy is—”,
+“Comment on the trade imbalance?”,
+“Experts say tariffs hurt—”,
+“Our allies are concerned—”,
+“What do you say to critics—”,
+“The CBO reports—”,
+“About the constitutional—”,
+“Economists have stated—”,
+“Address rising prices—”,
+];
+const COUNTRIES = [
+{ name: “Canada”, flag: “🇨🇦”, tariffRate: 0.25, difficulty: “Easy”, color: “#ff0000” },
+{ name: “UK”, flag: “🇬🇧”, tariffRate: 0.10, difficulty: “Easy”, color: “#003078” },
+{ name: “Mexico”, flag: “🇲🇽”, tariffRate: 0.25, difficulty: “Medium”, color: “#006341” },
+{ name: “Germany”, flag: “🇩🇪”, tariffRate: 0.20, difficulty: “Medium”, color: “#ffcc00” },
+{ name: “Japan”, flag: “🇯🇵”, tariffRate: 0.24, difficulty: “Medium”, color: “#bc002d” },
+{ name: “S. Korea”, flag: “🇰🇷”, tariffRate: 0.25, difficulty: “Medium”, color: “#003478” },
+{ name: “India”, flag: “🇮🇳”, tariffRate: 0.26, difficulty: “Hard”, color: “#ff9933” },
+{ name: “China”, flag: “🇨🇳”, tariffRate: 1.45, difficulty: “INSANE”, color: “#de2910” },
+{ name: “EU”, flag: “🇪🇺”, tariffRate: 0.20, difficulty: “Medium”, color: “#003399” },
+{ name: “Vietnam”, flag: “🇻🇳”, tariffRate: 0.46, difficulty: “Hard”, color: “#da251d” },
+];
+
+// ── GAME STATE ─────────────────────────────────────────────────
+const SC = { TITLE:0, MODE_SELECT:1, SHIP_SETUP:2, COUNTRY_SELECT:3, SHIP_GAME:4, SHIP_DEAD:5, TRUMP_GAME:6, TRUMP_OVER:7 };
+let scene = SC.TITLE;
+let animT = 0;
+let highScoreShip = parseInt(localStorage.getItem(‘tw_hs_ship’)||‘0’);
+let highScoreTrump = parseInt(localStorage.getItem(‘tw_hs_trump’)||‘0’);
+
+// Ship state
+let ship, tariffs, iceAgents, powerups, particles;
+let shipScore, shipLives, companyName=’’, selectedCountry=null;
+let waveTimer, oceanOffset, gameTime, shieldTimer, quoteTimer, currentQuote;
+let difficultyMult;
+
+// Trump state
+let trump, trumpScore, trumpEnergy;
+let reporters, supremeCourt, trumpTariffProj, trumpICEProj, incomingShips;
+let trumpQuoteTimer, trumpCurrentQuote, piggyMode, piggyTimer, approvalRating;
+let trumpWave, trumpWaveTimer, trumpParticles, trumpGameTime, quietPiggyCooldown;
+let wallHeight;
+
+// Stars bg
+const starsBg = [];
+for (let i = 0; i < 80; i++) {
+starsBg.push({ x: Math.random()*1200, y: Math.random()*900, s: Math.random()*2+0.5, b: Math.random() });
+}
+
+// ── TOUCH STATE ────────────────────────────────────────────────
+// Virtual joystick
+let joystick = { active: false, id: null, startX: 0, startY: 0, dx: 0, dy: 0 };
+const JOY_RADIUS = 55;
+const JOY_DEAD = 8;
+
+// Trump mode aim
+let aimTouch = { active: false, id: null, x: 0, y: 0 };
+let autoFireTimer = 0;
+
+// Buttons (trump mode)
+const BTN = { NONE:0, ICE:1, PIGGY:2, WALL:3, RECIP:4 };
+let touchButtons = [];
+let activeButtons = new Set();
+let reciprocalOn = false;
+
+// Track all touches
+let activeTouches = {};
+
+function getTouchPos(touch) {
+return { x: touch.clientX, y: touch.clientY };
+}
+
+// Joystick zone: bottom-left quadrant
+function isJoystickZone(x, y) {
+return x < W * 0.45 && y > H * 0.45;
+}
+
+// Button hit test
+function hitButton(x, y) {
+for (const btn of touchButtons) {
+const dx = x - btn.cx;
+const dy = y - btn.cy;
+if (dx*dx + dy*dy < btn.r * btn.r) return btn.id;
+}
+return BTN.NONE;
+}
+
+function buildTrumpButtons() {
+const r = Math.max(28, 28 * S);
+const pad = r * 2.4;
+const bx = W - r - 15;
+const by = H - r - 15;
+touchButtons = [
+{ id: BTN.ICE,   cx: bx,       cy: by - pad*2, r, label: ‘🚨’, sublabel: ‘ICE’ },
+{ id: BTN.PIGGY, cx: bx - pad,  cy: by - pad,   r, label: ‘🐷’, sublabel: ‘PIGGY’ },
+{ id: BTN.WALL,  cx: bx,       cy: by - pad,   r, label: ‘🧱’, sublabel: ‘WALL’ },
+{ id: BTN.RECIP, cx: bx - pad,  cy: by - pad*2, r, label: ‘↺’,  sublabel: ‘RECIP’ },
+];
+}
+
+// ── TOUCH HANDLERS ─────────────────────────────────────────────
+canvas.addEventListener(‘touchstart’, e => {
+e.preventDefault();
+initAudio();
+for (const touch of e.changedTouches) {
+const pos = getTouchPos(touch);
+const id = touch.identifier;
+activeTouches[id] = pos;
+
+```
+// --- Menu scenes: treat as click ---
+if (scene <= SC.COUNTRY_SELECT || scene === SC.SHIP_DEAD || scene === SC.TRUMP_OVER) {
+  handleMenuTap(pos.x, pos.y);
+  continue;
+}
+
+// --- Ship mode: joystick ---
+if (scene === SC.SHIP_GAME) {
+  if (!joystick.active && isJoystickZone(pos.x, pos.y)) {
+    joystick.active = true;
+    joystick.id = id;
+    joystick.startX = pos.x;
+    joystick.startY = pos.y;
+    joystick.dx = 0;
+    joystick.dy = 0;
+  }
+  continue;
+}
+
+// --- Trump mode ---
+if (scene === SC.TRUMP_GAME) {
+  const btn = hitButton(pos.x, pos.y);
+  if (btn !== BTN.NONE) {
+    activeButtons.add(btn);
+    activeTouches[id] = { ...pos, btn };
+    if (btn === BTN.RECIP) reciprocalOn = !reciprocalOn;
+  } else {
+    // Aim touch
+    aimTouch.active = true;
+    aimTouch.id = id;
+    aimTouch.x = pos.x;
+    aimTouch.y = pos.y;
+  }
+}
+```
+
+}
+}, { passive: false });
+
+canvas.addEventListener(‘touchmove’, e => {
+e.preventDefault();
+for (const touch of e.changedTouches) {
+const pos = getTouchPos(touch);
+const id = touch.identifier;
+activeTouches[id] = { …activeTouches[id], …pos };
+
+```
+if (scene === SC.SHIP_GAME && joystick.active && joystick.id === id) {
+  joystick.dx = pos.x - joystick.startX;
+  joystick.dy = pos.y - joystick.startY;
+  const mag = Math.hypot(joystick.dx, joystick.dy);
+  const maxR = JOY_RADIUS * 1.5;
+  if (mag > maxR) {
+    joystick.dx = (joystick.dx / mag) * maxR;
+    joystick.dy = (joystick.dy / mag) * maxR;
+  }
+}
+
+if (scene === SC.TRUMP_GAME && aimTouch.active && aimTouch.id === id) {
+  aimTouch.x = pos.x;
+  aimTouch.y = pos.y;
+}
+```
+
+}
+}, { passive: false });
+
+canvas.addEventListener(‘touchend’, e => {
+e.preventDefault();
+for (const touch of e.changedTouches) {
+const id = touch.identifier;
+if (scene === SC.SHIP_GAME && joystick.active && joystick.id === id) {
+joystick.active = false;
+joystick.dx = 0;
+joystick.dy = 0;
+}
+if (scene === SC.TRUMP_GAME) {
+if (aimTouch.id === id) aimTouch.active = false;
+const t = activeTouches[id];
+if (t && t.btn) activeButtons.delete(t.btn);
+}
+delete activeTouches[id];
+}
+}, { passive: false });
+canvas.addEventListener(‘touchcancel’, e => {
+for (const touch of e.changedTouches) {
+const id = touch.identifier;
+if (joystick.id === id) { joystick.active = false; joystick.dx = 0; joystick.dy = 0; }
+if (aimTouch.id === id) aimTouch.active = false;
+const t = activeTouches[id];
+if (t && t.btn) activeButtons.delete(t.btn);
+delete activeTouches[id];
+}
+});
+
+// ── NAME INPUT (iOS keyboard) ──────────────────────────────────
+let nameInputActive = false;
+nameInput.addEventListener(‘input’, () => {
+companyName = nameInput.value.slice(0, 20);
+});
+nameInput.addEventListener(‘keydown’, e => {
+if (e.key === ‘Enter’ && companyName.length > 0) {
+nameInput.blur();
+nameInputActive = false;
+scene = SC.COUNTRY_SELECT;
+}
+});
+nameInput.addEventListener(‘blur’, () => {
+if (scene === SC.SHIP_SETUP && companyName.length > 0) {
+nameInputActive = false;
+scene = SC.COUNTRY_SELECT;
+}
+});
+
+// ── HELPERS ────────────────────────────────────────────────────
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function rectCollide(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function lerp(a,b,t){return a+(b-a)*t}
+function randRange(a,b){return Math.random()*(b-a)+a}
+function spawnP(arr,x,y,color,count=5,spd=100){
+for(let i=0;i<count;i++){const a=Math.random()*Math.PI*2;const s=Math.random()*spd;
+arr.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,color,size:Math.random()*4+2});}
+}
+
+// ── DRAW HELPERS ───────────────────────────────────────────────
+function drawText(text,x,y,size,color,align=‘center’,font=‘sans-serif’) {
+ctx.font = `bold ${size}px ${font}`;
+ctx.fillStyle = color;
+ctx.textAlign = align;
+ctx.textBaseline = ‘middle’;
+ctx.fillText(text, x, y);
+}
+function drawOutline(text,x,y,size,color,stroke,align=‘center’,font=‘sans-serif’) {
+ctx.font = `bold ${size}px ${font}`;
+ctx.textAlign = align; ctx.textBaseline = ‘middle’;
+ctx.lineWidth = 3; ctx.strokeStyle = stroke;
+ctx.strokeText(text,x,y);
+ctx.fillStyle = color; ctx.fillText(text,x,y);
+}
+function drawGlow(x,y,r,color) {
+const g = ctx.createRadialGradient(x,y,0,x,y,r);
+g.addColorStop(0,color); g.addColorStop(1,‘transparent’);
+ctx.fillStyle = g; ctx.fillRect(x-r,y-r,r*2,r*2);
+}
+function roundRect(c,x,y,w,h,r) {
+c.beginPath(); c.moveTo(x+r,y); c.lineTo(x+w-r,y);
+c.quadraticCurveTo(x+w,y,x+w,y+r); c.lineTo(x+w,y+h-r);
+c.quadraticCurveTo(x+w,y+h,x+w-r,y+h); c.lineTo(x+r,y+h);
+c.quadraticCurveTo(x,y+h,x,y+h-r); c.lineTo(x,y+r);
+c.quadraticCurveTo(x,y,x+r,y); c.closePath();
+}
+
+// ── ENTITY DRAWING ─────────────────────────────────────────────
+function drawCargoShip(x,y,w,h,color) {
+ctx.fillStyle=’#444’;
+ctx.beginPath();
+ctx.moveTo(x-w/2,y); ctx.lineTo(x-w/2+6,y+h/2);
+ctx.lineTo(x+w/2-4,y+h/2); ctx.lineTo(x+w/2+8,y);
+ctx.lineTo(x+w/2-4,y-h/3); ctx.lineTo(x-w/2+6,y-h/3);
+ctx.closePath(); ctx.fill();
+ctx.fillStyle=color;
+ctx.fillRect(x-w/3,y-h/3-6,w*0.5,8);
+const cols=[’#e74c3c’,’#3498db’,’#2ecc71’,’#f39c12’];
+for(let i=0;i<3;i++){ctx.fillStyle=cols[i];ctx.fillRect(x-w/4+i*11,y-h/3-15,10,8);}
+ctx.fillStyle=’#ecf0f1’; ctx.fillRect(x-w/3-2,y-h/3-24,12,14);
+ctx.fillStyle=’#3498db’; ctx.fillRect(x-w/3,y-h/3-22,8,6);
+ctx.fillStyle=’#333’; ctx.fillRect(x-w/3+2,y-h/3-33,6,10);
+if(shieldTimer>0){
+ctx.strokeStyle=`rgba(0,255,255,${0.5+Math.sin(animT*10)*0.3})`;
+ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,w/2+12,0,Math.PI*2); ctx.stroke();
+}
+}
+
+function drawTrump(x,y,size) {
+ctx.fillStyle=’#1a1a2e’; ctx.fillRect(x-size*0.4,y+size*0.1,size*0.8,size*0.6);
+ctx.fillStyle=’#e74c3c’;
+ctx.beginPath(); ctx.moveTo(x-3,y+size*0.1); ctx.lineTo(x+3,y+size*0.1);
+ctx.lineTo(x+2,y+size*0.55); ctx.lineTo(x-2,y+size*0.55); ctx.closePath(); ctx.fill();
+ctx.fillStyle=’#f4c28f’; ctx.beginPath(); ctx.arc(x,y-size*0.05,size*0.3,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#f0c040’;
+ctx.beginPath(); ctx.ellipse(x,y-size*0.22,size*0.35,size*0.18,0,Math.PI,0); ctx.fill();
+ctx.beginPath(); ctx.ellipse(x+size*0.15,y-size*0.15,size*0.2,size*0.12,0.3,Math.PI,0); ctx.fill();
+ctx.fillStyle=’#fff’; ctx.beginPath();
+ctx.arc(x-7,y-size*0.05,3,0,Math.PI*2); ctx.arc(x+7,y-size*0.05,3,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#2980b9’; ctx.beginPath();
+ctx.arc(x-7,y-size*0.05,1.5,0,Math.PI*2); ctx.arc(x+7,y-size*0.05,1.5,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#c0392b’; ctx.beginPath(); ctx.ellipse(x,y+size*0.08,5,2.5,0,0,Math.PI); ctx.fill();
+}
+
+function drawTariffObj(t) {
+const p=1+Math.sin(animT*5+t.x)*0.1;
+ctx.save(); ctx.translate(t.x,t.y); ctx.scale(p,p);
+ctx.fillStyle=t.reciprocal?’#ff6600’:’#e74c3c’;
+ctx.fillRect(-12,-16,24,32);
+ctx.fillStyle=’#fff’; ctx.fillRect(-9,-13,18,3); ctx.fillRect(-9,-7,14,2); ctx.fillRect(-9,-2,16,2);
+drawText(`${t.percent}%`,0,10,9,’#fff’);
+if(t.reciprocal) drawText(‘↺’,0,-21,12,’#ff6600’);
+ctx.restore();
+}
+
+function drawICEAgent(a) {
+ctx.save(); ctx.translate(a.x,a.y);
+ctx.fillStyle=’#1a3a5c’; ctx.fillRect(-10,0,20,20);
+ctx.fillStyle=’#f4c28f’; ctx.beginPath(); ctx.arc(0,-6,10,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#0d2137’; ctx.fillRect(-12,-15,24,8);
+drawText(‘ICE’,0,10,8,’#fff’);
+ctx.fillStyle=’#f1c40f’; ctx.beginPath(); ctx.arc(8,4,3,0,Math.PI*2); ctx.fill();
+if(Math.sin(animT*15)>0) drawGlow(0,-18,16,‘rgba(255,0,0,0.4)’);
+else drawGlow(0,-18,16,‘rgba(0,0,255,0.4)’);
+ctx.restore();
+}
+
+function drawReporter(r) {
+ctx.save(); ctx.translate(r.x,r.y);
+ctx.fillStyle=’#555’; ctx.fillRect(-8,4,16,16);
+ctx.fillStyle=’#f4c28f’; ctx.beginPath(); ctx.arc(0,-4,8,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#333’; ctx.fillRect(10,-4,3,12);
+ctx.fillStyle=’#888’; ctx.beginPath(); ctx.arc(11.5,-7,4,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#e74c3c’; ctx.fillRect(-7,4,14,6);
+drawText(‘PRESS’,0,7,5,’#fff’);
+if(r.question&&r.questionTimer>0){
+ctx.font=‘10px sans-serif’;
+const tw=ctx.measureText(r.question).width+12;
+ctx.fillStyle=‘rgba(255,255,255,0.92)’;
+roundRect(ctx,-tw/2,-36,tw,20,6); ctx.fill();
+drawText(r.question,0,-26,10,’#333’);
+}
+ctx.restore();
+}
+
+function drawSupremeCourt(sc) {
+ctx.save(); ctx.translate(sc.x,sc.y);
+ctx.fillStyle=’#111’; ctx.fillRect(-12,4,24,24);
+ctx.fillStyle=’#f0d0b0’; ctx.beginPath(); ctx.arc(0,-4,10,0,Math.PI*2); ctx.fill();
+ctx.fillStyle=’#8B4513’; ctx.save(); ctx.rotate(Math.sin(animT*4)*0.4);
+ctx.fillRect(12,-12,3,16); ctx.fillRect(9,-14,10,5); ctx.restore();
+drawText(‘⚖️’,0,18,10,’#f1c40f’);
+ctx.restore();
+}
+
+// ── BACKGROUNDS ────────────────────────────────────────────────
+function drawOcean() {
+const sg=ctx.createLinearGradient(0,0,0,H*0.3);
+sg.addColorStop(0,’#0a0a2e’); sg.addColorStop(1,’#1a1a4e’);
+ctx.fillStyle=sg; ctx.fillRect(0,0,W,H*0.3);
+starsBg.forEach(s=>{
+const b=0.3+Math.sin(animT*2+s.b*10)*0.3;
+ctx.fillStyle=`rgba(255,255,255,${b})`;
+ctx.fillRect(s.x%W,s.y%(H*0.3),s.s,s.s);
+});
+const og=ctx.createLinearGradient(0,H*0.3,0,H);
+og.addColorStop(0,’#0c3547’); og.addColorStop(0.5,’#0a2a3a’); og.addColorStop(1,’#061520’);
+ctx.fillStyle=og; ctx.fillRect(0,H*0.3,W,H*0.7);
+ctx.strokeStyle=‘rgba(100,200,255,0.12)’; ctx.lineWidth=1.5;
+for(let row=0;row<6;row++){
+ctx.beginPath();
+const by=H*0.35+row*40+(oceanOffset||0)%40;
+for(let x=0;x<W;x+=5){const y=by+Math.sin((x+animT*80+row*50)*0.02)*6;
+x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+ctx.stroke();
+}
+}
+
+function drawWhiteHouse() {
+const sg=ctx.createLinearGradient(0,0,0,H);
+sg.addColorStop(0,’#0a0a2e’); sg.addColorStop(0.4,’#1a1a3e’); sg.addColorStop(1,’#0d1b2a’);
+ctx.fillStyle=sg; ctx.fillRect(0,0,W,H);
+starsBg.forEach(s=>{
+const b=0.2+Math.sin(animT+s.b*10)*0.2;
+ctx.fillStyle=`rgba(255,255,255,${b})`;
+ctx.fillRect(s.x%W,s.y*0.3,s.s,s.s);
+});
+ctx.fillStyle=’#1a3320’; ctx.fillRect(0,H-60,W,60);
+ctx.fillStyle=‘rgba(255,255,255,0.04)’;
+ctx.fillRect(W/2-150,H-200,300,140);
+for(let i=0;i<6;i++){ctx.fillRect(W/2-130+i*50,H-190,8,120);}
+ctx.beginPath(); ctx.arc(W/2,H-210,45,Math.PI,0);
+ctx.fillStyle=‘rgba(255,255,255,0.03)’; ctx.fill();
+if(wallHeight>0){
+const wh=Math.min(wallHeight,150);
+for(let bx=0;bx<W;bx+=24){
+for(let r=0;r<Math.ceil(wh/12);r++){
+const off=(r%2===0)?0:12;
+ctx.fillStyle=(r+Math.floor(bx/24))%3===0?’#999’:’#777’;
+ctx.fillRect(bx+off,H-60-wh+r*12,22,10);
+ctx.strokeStyle=’#666’; ctx.lineWidth=0.5;
+ctx.strokeRect(bx+off,H-60-wh+r*12,22,10);
+}
+}
+drawText(‘🧱 THE WALL 🧱’,W/2,H-60-wh-12,11,’#f1c40f’);
+}
+}
+
+// ── VIRTUAL JOYSTICK DRAW ──────────────────────────────────────
+function drawJoystick() {
+if (scene !== SC.SHIP_GAME) return;
+const cx = joystick.active ? joystick.startX : W * 0.15;
+const cy = joystick.active ? joystick.startY : H - 100;
+// Outer ring
+ctx.globalAlpha = joystick.active ? 0.4 : 0.2;
+ctx.strokeStyle = ‘#fff’;
+ctx.lineWidth = 2;
+ctx.beginPath(); ctx.arc(cx, cy, JOY_RADIUS, 0, Math.PI*2); ctx.stroke();
+ctx.fillStyle = ‘rgba(255,255,255,0.05)’;
+ctx.beginPath(); ctx.arc(cx, cy, JOY_RADIUS, 0, Math.PI*2); ctx.fill();
+// Inner thumb
+const tx = cx + joystick.dx;
+const ty = cy + joystick.dy;
+ctx.fillStyle = joystick.active ? ‘rgba(52,152,219,0.6)’ : ‘rgba(255,255,255,0.15)’;
+ctx.beginPath(); ctx.arc(tx, ty, 22, 0, Math.PI*2); ctx.fill();
+ctx.globalAlpha = 1;
+if (!joystick.active) {
+drawText(‘MOVE’, cx, cy - JOY_RADIUS - 14, 11, ‘rgba(255,255,255,0.3)’);
+}
+}
+
+// ── TRUMP BUTTONS DRAW ─────────────────────────────────────────
+function drawTrumpButtons() {
+if (scene !== SC.TRUMP_GAME) return;
+buildTrumpButtons();
+for (const btn of touchButtons) {
+const isActive = activeButtons.has(btn.id) || (btn.id === BTN.RECIP && reciprocalOn);
+ctx.globalAlpha = isActive ? 0.8 : 0.45;
+ctx.fillStyle = isActive ? ‘rgba(255,255,255,0.2)’ : ‘rgba(0,0,0,0.4)’;
+ctx.beginPath(); ctx.arc(btn.cx, btn.cy, btn.r, 0, Math.PI*2); ctx.fill();
+ctx.strokeStyle = isActive ? ‘#f1c40f’ : ‘rgba(255,255,255,0.3)’;
+ctx.lineWidth = 2;
+ctx.beginPath(); ctx.arc(btn.cx, btn.cy, btn.r, 0, Math.PI*2); ctx.stroke();
+ctx.globalAlpha = 1;
+drawText(btn.label, btn.cx, btn.cy - 4, btn.r * 0.7, ‘#fff’);
+drawText(btn.sublabel, btn.cx, btn.cy + btn.r * 0.5, 9, isActive ? ‘#f1c40f’ : ‘#aaa’);
+}
+// Fire hint
+drawText(‘TAP to fire tariffs’, W/2, H - 12, 10, ‘rgba(255,255,255,0.25)’);
+}
+
+// ── MENU TAP HANDLER ───────────────────────────────────────────
+function handleMenuTap(cx, cy) {
+if (scene === SC.TITLE) { scene = SC.MODE_SELECT; return; }
+
+if (scene === SC.MODE_SELECT) {
+const midY = H * 0.18;
+const boxH = H * 0.35;
+// Ship: top half
+if (cy > midY && cy < midY + boxH) {
+scene = SC.SHIP_SETUP;
+companyName = ‘’;
+nameInput.value = ‘’;
+setTimeout(() => { nameInput.focus(); nameInputActive = true; }, 100);
+}
+// Trump: bottom half
+if (cy > midY + boxH + 20 && cy < midY + boxH * 2 + 20) {
+scene = SC.TRUMP_GAME;
+initTrumpMode();
+}
+return;
+}
+
+if (scene === SC.SHIP_SETUP) {
+if (!nameInputActive) {
+nameInput.focus();
+nameInputActive = true;
+}
+if (companyName.length > 0 && cy > H * 0.55) {
+nameInput.blur();
+nameInputActive = false;
+scene = SC.COUNTRY_SELECT;
+}
+return;
+}
+
+if (scene === SC.COUNTRY_SELECT) {
+const cols = 2;
+const bw = Math.min(180, (W - 40) / 2 - 8);
+const bh = 50;
+const sx = W/2 - (cols * bw + 8) / 2;
+const sy = H * 0.16;
+COUNTRIES.forEach((c, i) => {
+const col = i % cols;
+const row = Math.floor(i / cols);
+const bx = sx + col * (bw + 8);
+const by = sy + row * (bh + 8);
+if (cx > bx && cx < bx + bw && cy > by && cy < by + bh) {
+selectedCountry = c;
+scene = SC.SHIP_GAME;
+initShipMode();
+}
+});
+return;
+}
+
+if (scene === SC.SHIP_DEAD || scene === SC.TRUMP_OVER) {
+scene = SC.MODE_SELECT;
+return;
+}
+}
+
+// ── INIT MODES ─────────────────────────────────────────────────
+function initShipMode() {
+ship = { x: W/2, y: H*0.7, w: 50, h: 34, speed: 220 };
+tariffs=[]; iceAgents=[]; powerups=[]; particles=[];
+shipScore=0; shipLives=3; waveTimer=0; gameTime=0;
+shieldTimer=0; quoteTimer=3; oceanOffset=0;
+currentQuote=TRUMP_QUOTES[Math.floor(Math.random()*TRUMP_QUOTES.length)];
+difficultyMult=selectedCountry?selectedCountry.tariffRate*2:1;
+}
+
+function initTrumpMode() {
+trump={x:W/2,y:H-90,size:40};
+trumpScore=0; trumpEnergy=100;
+reporters=[]; supremeCourt=[]; trumpTariffProj=[]; trumpICEProj=[]; incomingShips=[];
+trumpQuoteTimer=0; trumpCurrentQuote=’’; piggyMode=false; piggyTimer=0;
+approvalRating=50; trumpWave=0; trumpWaveTimer=5;
+trumpParticles=[]; trumpGameTime=0; quietPiggyCooldown=0; wallHeight=0;
+reciprocalOn=false; activeButtons.clear();
+buildTrumpButtons();
+}
+
+// ── UPDATE SHIP ────────────────────────────────────────────────
+function updateShipMode(dt) {
+gameTime += dt;
+oceanOffset += dt * 30;
+
+// Joystick input
+if (joystick.active) {
+const mag = Math.hypot(joystick.dx, joystick.dy);
+if (mag > JOY_DEAD) {
+const norm = Math.min(mag, JOY_RADIUS) / JOY_RADIUS;
+ship.x += (joystick.dx / mag) * ship.speed * norm * dt;
+ship.y += (joystick.dy / mag) * ship.speed * norm * dt;
+}
+}
+ship.x = Math.max(30, Math.min(W-30, ship.x));
+ship.y = Math.max(50, Math.min(H-40, ship.y));
+
+// Spawn tariffs
+waveTimer -= dt;
+const spawnRate = Math.max(0.3, 1.2 - gameTime*0.02);
+if (waveTimer <= 0) {
+waveTimer = spawnRate / difficultyMult;
+const recip = Math.random() < 0.3;
+const pct = recip ? Math.round(selectedCountry.tariffRate*100*2) : Math.round(selectedCountry.tariffRate*100);
+tariffs.push({ x: Math.random()*(W-50)+25, y:-25, vy:70+gameTime*3+difficultyMult*25, w:24, h:32, reciprocal:recip, percent:pct });
+}
+
+// Spawn ICE
+if (Math.random() < 0.003*difficultyMult+gameTime*0.0003) {
+const side = Math.random()<0.5;
+iceAgents.push({ x:side?-20:W+20, y:Math.random()*(H-180)+80, vx:(side?1:-1)*(100+gameTime*5), w:20, h:28 });
+}
+
+// Spawn powerups
+if (Math.random()<0.002) {
+const types=[‘shield’,‘score’,‘slow’];
+powerups.push({ x:Math.random()*(W-30)+15, y:-15, vy:55, type:types[Math.floor(Math.random()*types.length)], w:18, h:18 });
+}
+
+tariffs.forEach(t=>{t.y+=t.vy*dt}); tariffs=tariffs.filter(t=>t.y<H+40);
+iceAgents.forEach(a=>{a.x+=a.vx*dt}); iceAgents=iceAgents.filter(a=>a.x>-40&&a.x<W+40);
+powerups.forEach(p=>{p.y+=p.vy*dt}); powerups=powerups.filter(p=>p.y<H+20);
+
+const sr={x:ship.x-ship.w/2,y:ship.y-ship.h/2,w:ship.w,h:ship.h};
+
+tariffs=tariffs.filter(t=>{
+const tr={x:t.x-12,y:t.y-16,w:24,h:32};
+if(rectCollide(sr,tr)){
+if(shieldTimer>0){spawnP(particles,t.x,t.y,’#00ffff’,6,60);sfxScore();shipScore+=t.percent*10;return false;}
+sfxHit(); shipLives–;shipScore-=t.percent*5;if(shipScore<0)shipScore=0;
+spawnP(particles,ship.x,ship.y,’#ff4444’,12,100);
+currentQuote=`${t.percent}% TARIFF HIT!${t.reciprocal?' RECIPROCAL!':''}`;quoteTimer=2;
+if(shipLives<=0){scene=SC.SHIP_DEAD;sfxDeath();
+if(shipScore>highScoreShip){highScoreShip=shipScore;localStorage.setItem(‘tw_hs_ship’,highScoreShip);}}
+return false;
+} return true;
+});
+
+iceAgents.forEach(a=>{
+const ar={x:a.x-10,y:a.y-12,w:20,h:28};
+if(rectCollide(sr,ar)&&shieldTimer<=0){
+shipLives=0;scene=SC.SHIP_DEAD;sfxDeath();
+spawnP(particles,ship.x,ship.y,’#ff0000’,25,180);
+currentQuote=“ICE GOT YOU! DEPORTED! 🚨”;quoteTimer=3;
+if(shipScore>highScoreShip){highScoreShip=shipScore;localStorage.setItem(‘tw_hs_ship’,highScoreShip);}
+}
+});
+
+powerups=powerups.filter(p=>{
+const pr={x:p.x-9,y:p.y-9,w:18,h:18};
+if(rectCollide(sr,pr)){
+sfxScore();
+if(p.type===‘shield’){shieldTimer=5;currentQuote=“TRADE AGREEMENT SHIELD! 🛡️”;}
+if(p.type===‘score’){shipScore+=500;currentQuote=“BONUS CARGO! 📦”;}
+if(p.type===‘slow’){tariffs.forEach(t=>t.vy*=0.5);currentQuote=“NEGOTIATIONS SLOWED! ⏳”;}
+quoteTimer=2;spawnP(particles,p.x,p.y,’#00ff88’,8,50);return false;
+} return true;
+});
+
+shipScore+=Math.round(dt*50*(1+gameTime*0.05));
+if(shieldTimer>0)shieldTimer-=dt;
+if(quoteTimer>0)quoteTimer-=dt;
+particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt*2;});
+particles=particles.filter(p=>p.life>0);
+if(Math.random()<0.003){currentQuote=TRUMP_QUOTES[Math.floor(Math.random()*TRUMP_QUOTES.length)];quoteTimer=3;}
+}
+
+// ── UPDATE TRUMP ───────────────────────────────────────────────
+function updateTrumpMode(dt) {
+trumpGameTime += dt;
+
+// Move trump toward aim
+if (aimTouch.active) {
+trump.x = lerp(trump.x, aimTouch.x, 0.1);
+trump.x = Math.max(30, Math.min(W-30, trump.x));
+}
+
+trumpEnergy = Math.min(100, trumpEnergy + dt*8);
+
+// Auto-fire when aiming
+if (aimTouch.active && trumpEnergy >= 8) {
+autoFireTimer -= dt;
+if (autoFireTimer <= 0) {
+autoFireTimer = 0.25;
+trumpEnergy -= 8;
+const angle = Math.atan2(aimTouch.y - trump.y, aimTouch.x - trump.x);
+trumpTariffProj.push({ x:trump.x, y:trump.y-15, vx:Math.cos(angle)*380, vy:Math.sin(angle)*380, reciprocal:reciprocalOn });
+sfxTariff();
+}
+}
+
+// ICE button
+if (activeButtons.has(BTN.ICE) && trumpEnergy >= 25) {
+activeButtons.delete(BTN.ICE);
+trumpEnergy -= 25;
+const target = incomingShips.length > 0 ? incomingShips[0] : { x: W/2, y: H*0.3 };
+const angle = Math.atan2(target.y - trump.y, target.x - trump.x);
+trumpICEProj.push({ x:trump.x, y:trump.y-15, vx:Math.cos(angle)*280, vy:Math.sin(angle)*280 });
+sfxICE(); trumpCurrentQuote=“SENDING ICE! 🚨”; trumpQuoteTimer=1;
+}
+
+// Piggy button
+if (activeButtons.has(BTN.PIGGY) && quietPiggyCooldown <= 0) {
+activeButtons.delete(BTN.PIGGY);
+quietPiggyCooldown=3; piggyMode=true; piggyTimer=1.5;
+sfxQuiet(); trumpCurrentQuote=’“QUIET, PIGGY!” 🐷’; trumpQuoteTimer=2;
+reporters.forEach(r=>{r.vy=0;r.piggied=true;r.questionTimer=0;spawnP(trumpParticles,r.x,r.y,’#f39c12’,6,40);});
+approvalRating=Math.min(100,approvalRating+5); trumpScore+=200;
+}
+
+// Wall button
+if (activeButtons.has(BTN.WALL) && trumpEnergy >= 1) {
+trumpEnergy -= dt*20;
+wallHeight += dt*40;
+if(wallHeight>150)wallHeight=150;
+}
+
+if(quietPiggyCooldown>0)quietPiggyCooldown-=dt;
+if(piggyTimer>0)piggyTimer-=dt; else piggyMode=false;
+
+// Waves
+trumpWaveTimer -= dt;
+if (trumpWaveTimer <= 0) {
+trumpWave++;
+trumpWaveTimer = Math.max(4, 14 - trumpWave);
+const count = 2 + trumpWave;
+for (let i=0; i<count; i++) {
+const side = Math.random()<0.5;
+const country = COUNTRIES[Math.floor(Math.random()*COUNTRIES.length)];
+incomingShips.push({ x:side?-35:W+35, y:60+Math.random()*(H*0.35), vx:(side?1:-1)*(35+trumpWave*5),
+w:42,h:26,hp:1+Math.floor(trumpWave/3),maxHp:1+Math.floor(trumpWave/3),country,scored:false });
+}
+trumpCurrentQuote=`WAVE ${trumpWave}: ${count} ships!`; trumpQuoteTimer=2;
+}
+
+// Reporters
+if(Math.random()<0.007+trumpGameTime*0.0004){
+reporters.push({x:Math.random()*(W-50)+25,y:H+25,vy:-(40+Math.random()*25),w:16,h:24,
+question:REPORTER_QUESTIONS[Math.floor(Math.random()*REPORTER_QUESTIONS.length)],questionTimer:3,piggied:false});
+}
+
+// Supreme Court
+if(Math.random()<0.003+trumpGameTime*0.0003){
+supremeCourt.push({x:Math.random()<0.5?-20:W+20,y:H-120+Math.random()*60,
+vx:(Math.random()<0.5?1:-1)*(55+trumpWave*7),w:24,h:32});
+}
+
+// Update
+trumpTariffProj.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt});
+trumpTariffProj=trumpTariffProj.filter(p=>p.x>-20&&p.x<W+20&&p.y>-20&&p.y<H+20);
+trumpICEProj.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt});
+trumpICEProj=trumpICEProj.filter(p=>p.x>-20&&p.x<W+20&&p.y>-20&&p.y<H+20);
+
+incomingShips.forEach(s=>{s.x+=s.vx*dt});
+incomingShips=incomingShips.filter(s=>{
+if(s.x<-55||s.x>W+55){if(!s.scored){approvalRating-=3;trumpScore-=50;}return false;}
+if(wallHeight>15&&s.y>H-60-wallHeight&&s.y<H-60){
+s.vx*=-1;s.hp–;spawnP(trumpParticles,s.x,s.y,’#888’,4,30);
+if(s.hp<=0){s.scored=true;trumpScore+=100;approvalRating+=1;return false;}}
+return true;
+});
+
+// Tariff vs ship
+trumpTariffProj=trumpTariffProj.filter(p=>{
+let hit=false;
+incomingShips.forEach(s=>{
+if(Math.abs(p.x-s.x)<30&&Math.abs(p.y-s.y)<22){
+s.hp–;hit=true;spawnP(trumpParticles,p.x,p.y,p.reciprocal?’#ff6600’:’#e74c3c’,5,50);
+if(s.hp<=0){s.scored=true;trumpScore+=p.reciprocal?200:100;approvalRating=Math.min(100,approvalRating+2);
+spawnP(trumpParticles,s.x,s.y,’#f1c40f’,12,80);sfxScore();}}
+}); return !hit;
+});
+incomingShips=incomingShips.filter(s=>s.hp>0||!s.scored);
+
+// ICE vs ship
+trumpICEProj=trumpICEProj.filter(p=>{
+let hit=false;
+incomingShips.forEach(s=>{
+if(Math.abs(p.x-s.x)<30&&Math.abs(p.y-s.y)<22){
+hit=true;s.hp=0;s.scored=true;trumpScore+=300;approvalRating=Math.min(100,approvalRating+3);
+spawnP(trumpParticles,s.x,s.y,’#0000ff’,16,100);sfxScore();
+trumpCurrentQuote=“DEPORTED! 🚨”;trumpQuoteTimer=1;}
+}); return !hit;
+});
+incomingShips=incomingShips.filter(s=>s.hp>0||!s.scored);
+
+reporters.forEach(r=>{if(!r.piggied)r.y+=r.vy*dt;if(r.questionTimer>0)r.questionTimer-=dt;});
+reporters=reporters.filter(r=>r.y>-40);
+reporters.forEach(r=>{
+if(!r.piggied&&Math.abs(r.x-trump.x)<35&&Math.abs(r.y-trump.y)<35){approvalRating-=2;r.piggied=true;}
+});
+
+supremeCourt.forEach(sc=>{sc.x+=sc.vx*dt});
+supremeCourt=supremeCourt.filter(sc=>{
+if(Math.abs(sc.x-trump.x)<35&&Math.abs(sc.y-trump.y)<35){
+approvalRating-=10;trumpScore-=200;spawnP(trumpParticles,trump.x,trump.y,’#fff’,12,80);sfxHit();
+trumpCurrentQuote=“BLOCKED BY SCOTUS! ⚖️”;trumpQuoteTimer=2;return false;}
+if(sc.x<-40||sc.x>W+40)return false; return true;
+});
+
+approvalRating=Math.max(0,Math.min(100,approvalRating));
+if(approvalRating<=0){
+scene=SC.TRUMP_OVER;sfxDeath();
+if(trumpScore>highScoreTrump){highScoreTrump=trumpScore;localStorage.setItem(‘tw_hs_trump’,highScoreTrump);}
+}
+
+trumpScore+=Math.round(dt*20);
+trumpParticles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt*2;});
+trumpParticles=trumpParticles.filter(p=>p.life>0);
+if(trumpQuoteTimer>0)trumpQuoteTimer-=dt;
+if(Math.random()<0.002){trumpCurrentQuote=TRUMP_QUOTES[Math.floor(Math.random()*TRUMP_QUOTES.length)];trumpQuoteTimer=3;}
+}
+
+// ── DRAW SCENES ────────────────────────────────────────────────
+function drawTitle() {
+const bg=ctx.createLinearGradient(0,0,W,H);
+bg.addColorStop(0,’#0a0a2e’); bg.addColorStop(0.5,’#1a0a2e’); bg.addColorStop(1,’#0a1a3e’);
+ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+starsBg.forEach(s=>{const b=0.3+Math.sin(animT*2+s.b*10)*0.3;ctx.fillStyle=`rgba(255,255,255,${b})`;ctx.fillRect(s.x%W,s.y%(H*0.6),s.s,s.s);});
+for(let i=0;i<13;i++){ctx.fillStyle=i%2===0?‘rgba(200,50,50,0.04)’:‘rgba(255,255,255,0.015)’;ctx.fillRect(0,i*(H/13),W,H/13);}
+
+const ty=H*0.2;
+const bounce=Math.sin(animT*3)*4;
+const ts=Math.min(48, W*0.11);
+ctx.shadowColor=’#ff4444’; ctx.shadowBlur=20;
+drawOutline(‘TARIFF WARS’,W/2,ty+bounce,ts,’#fff’,’#cc0000’);
+ctx.shadowBlur=0;
+drawOutline(‘2025’,W/2,ty+ts*0.9+bounce,ts*0.65,’#f1c40f’,’#8B4513’);
+drawText(‘🦅’,W/2-ts*2.5,ty+bounce,ts*0.7,’#fff’);
+drawText(‘🦅’,W/2+ts*2.5,ty+bounce,ts*0.7,’#fff’);
+
+drawText(’“Trade wars are good, and easy to win!”’,W/2,ty+ts*1.6,Math.min(13,W*0.032),‘rgba(255,255,255,0.5)’);
+
+const flash=Math.sin(animT*4)>0;
+if(flash) drawText(’[ TAP TO START ]’,W/2,H*0.52,Math.min(18,W*0.045),’#f1c40f’);
+
+drawText(`🚢 Ship Best: $${highScoreShip.toLocaleString()}`,W/2,H*0.68,Math.min(15,W*0.038),’#3498db’);
+drawText(`🇺🇸 Trump Best: ${highScoreTrump.toLocaleString()}`,W/2,H*0.74,Math.min(15,W*0.038),’#e74c3c’);
+drawText(“Tighter than Kittle’s route-running”,W/2,H*0.88,Math.min(11,W*0.028),‘rgba(255,255,255,0.2)’);
+drawText(‘MOBILE EDITION’,W/2,H*0.93,Math.min(10,W*0.025),‘rgba(255,255,255,0.15)’);
+}
+
+function drawModeSelect() {
+const bg=ctx.createLinearGradient(0,0,W,H);
+bg.addColorStop(0,’#0a0a2e’); bg.addColorStop(1,’#1a1a3e’);
+ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+
+drawOutline(‘SELECT MODE’,W/2,H*0.08,Math.min(32,W*0.08),’#fff’,’#333’);
+
+// Ship box
+const bx=W*0.06, bw=W*0.88;
+const midY=H*0.18, boxH=H*0.35;
+
+ctx.fillStyle=‘rgba(52,152,219,0.15)’; ctx.strokeStyle=‘rgba(52,152,219,0.5)’; ctx.lineWidth=2;
+roundRect(ctx,bx,midY,bw,boxH,12); ctx.fill(); ctx.stroke();
+drawText(‘🚢’,W/2,midY+boxH*0.18,36,’#fff’);
+drawOutline(‘MODE 1: THE SHIP’,W/2,midY+boxH*0.4,Math.min(22,W*0.055),’#3498db’,’#111’);
+drawText(‘Dodge tariffs & ICE as a cargo ship’,W/2,midY+boxH*0.58,Math.min(13,W*0.033),’#aaa’);
+drawText(‘Choose country • Name your company’,W/2,midY+boxH*0.72,Math.min(12,W*0.03),’#888’);
+drawText(‘Virtual joystick to steer’,W/2,midY+boxH*0.86,Math.min(11,W*0.028),’#666’);
+
+// Trump box
+const ty2=midY+boxH+20;
+ctx.fillStyle=‘rgba(231,76,60,0.15)’; ctx.strokeStyle=‘rgba(231,76,60,0.5)’; ctx.lineWidth=2;
+roundRect(ctx,bx,ty2,bw,boxH,12); ctx.fill(); ctx.stroke();
+drawText(‘🇺🇸’,W/2,ty2+boxH*0.18,36,’#fff’);
+drawOutline(‘MODE 2: THE DONALD’,W/2,ty2+boxH*0.4,Math.min(22,W*0.055),’#e74c3c’,’#111’);
+drawText(‘Fire tariffs • Send ICE • Dodge SCOTUS’,W/2,ty2+boxH*0.58,Math.min(13,W*0.033),’#aaa’);
+drawText(‘Tell reporters “Quiet, Piggy!”’,W/2,ty2+boxH*0.72,Math.min(12,W*0.03),’#f39c12’);
+drawText(‘Tap to aim & fire • Buttons for abilities’,W/2,ty2+boxH*0.86,Math.min(11,W*0.028),’#666’);
+}
+
+function drawShipSetup() {
+const bg=ctx.createLinearGradient(0,0,0,H);
+bg.addColorStop(0,’#0a1628’); bg.addColorStop(1,’#0c2940’);
+ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+drawOutline(‘NAME YOUR COMPANY’,W/2,H*0.12,Math.min(26,W*0.065),’#3498db’,’#111’);
+
+ctx.fillStyle=‘rgba(255,255,255,0.1)’; ctx.strokeStyle=’#3498db’; ctx.lineWidth=2;
+const iw=Math.min(350,W*0.85);
+roundRect(ctx,W/2-iw/2,H*0.22,iw,44,10); ctx.fill(); ctx.stroke();
+const display=companyName||(nameInputActive?’’:‘Tap here to type…’);
+const cursor=nameInputActive&&Math.sin(animT*6)>0?’|’:’’;
+drawText(display+cursor,W/2,H*0.22+22,Math.min(20,W*0.05),companyName?’#fff’:’#666’);
+
+if(companyName.length>0){
+ctx.fillStyle=‘rgba(52,152,219,0.3)’; ctx.strokeStyle=’#3498db’; ctx.lineWidth=2;
+roundRect(ctx,W/2-80,H*0.6,160,44,10); ctx.fill(); ctx.stroke();
+drawText(‘CONTINUE →’,W/2,H*0.6+22,16,’#fff’);
+}
+
+drawText(‘Type your company name above’,W/2,H*0.42,13,‘rgba(255,255,255,0.4)’);
+}
+
+function drawCountrySelect() {
+const bg=ctx.createLinearGradient(0,0,0,H);
+bg.addColorStop(0,’#0a1628’); bg.addColorStop(1,’#0c2940’);
+ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+drawOutline(`${companyName} SHIPPING`,W/2,H*0.06,Math.min(20,W*0.05),’#3498db’,’#111’);
+drawText(‘Select country of origin:’,W/2,H*0.12,Math.min(14,W*0.035),’#aaa’);
+
+const cols=2;
+const bw=Math.min(180,(W-40)/2-8);
+const bh=50;
+const sx=W/2-(cols*bw+8)/2;
+const sy=H*0.16;
+
+COUNTRIES.forEach((c,i)=>{
+const col=i%cols, row=Math.floor(i/cols);
+const bx=sx+col*(bw+8), by=sy+row*(bh+8);
+let dc=’#2ecc71’;
+if(c.difficulty===‘Medium’)dc=’#f39c12’;
+if(c.difficulty===‘Hard’)dc=’#e74c3c’;
+if(c.difficulty===‘INSANE’)dc=’#9b59b6’;
+ctx.fillStyle=‘rgba(255,255,255,0.06)’; ctx.strokeStyle=dc; ctx.lineWidth=1.5;
+roundRect(ctx,bx,by,bw,bh,8); ctx.fill(); ctx.stroke();
+drawText(`${c.flag} ${c.name}`,bx+bw/2,by+18,Math.min(15,bw*0.09),’#fff’);
+drawText(`${c.difficulty} — ${Math.round(c.tariffRate*100)}%`,bx+bw/2,by+37,Math.min(11,bw*0.065),dc);
+});
+drawText(‘Higher tariffs = harder!’,W/2,H-20,11,‘rgba(255,255,255,0.3)’);
+}
+
+function drawShipMode() {
+drawOcean();
+powerups.forEach(p=>{const e=p.type===‘shield’?‘🛡️’:p.type===‘score’?‘💰’:‘⏳’;drawText(e,p.x,p.y,18);drawGlow(p.x,p.y,16,‘rgba(0,255,100,0.25)’);});
+tariffs.forEach(t=>drawTariffObj(t));
+iceAgents.forEach(a=>drawICEAgent(a));
+drawCargoShip(ship.x,ship.y,ship.w,ship.h,selectedCountry?selectedCountry.color:’#3498db’);
+particles.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);ctx.globalAlpha=1;});
+drawJoystick();
+
+// HUD
+ctx.fillStyle=‘rgba(0,0,0,0.65)’; ctx.fillRect(0,0,W,40);
+drawText(`${selectedCountry?.flag||'🚢'} ${companyName}`,8,20,Math.min(14,W*0.035),’#fff’,‘left’);
+drawText(`$${shipScore.toLocaleString()}`,W/2,20,Math.min(16,W*0.04),’#f1c40f’);
+for(let i=0;i<shipLives;i++) drawText(‘❤️’,W-22-i*24,20,16);
+if(shieldTimer>0) drawText(`🛡️${shieldTimer.toFixed(1)}`,W-90,20,11,’#0ff’,‘left’);
+
+if(quoteTimer>0&&currentQuote){
+const a=Math.min(1,quoteTimer);
+ctx.globalAlpha=a;
+ctx.fillStyle=‘rgba(0,0,0,0.7)’;
+ctx.font=`bold ${Math.min(14,W*0.035)}px sans-serif`;
+const tw2=ctx.measureText(`"${currentQuote}"`).width+30;
+roundRect(ctx,W/2-tw2/2,48,tw2,28,6); ctx.fill();
+drawText(`"${currentQuote}"`,W/2,62,Math.min(14,W*0.035),’#f1c40f’);
+ctx.globalAlpha=1;
+}
+}
+
+function drawTrumpMode() {
+drawWhiteHouse();
+incomingShips.forEach(s=>{
+drawCargoShip(s.x,s.y,s.w,s.h,s.country.color);
+drawText(s.country.flag,s.x,s.y-28,13);
+if(s.maxHp>1){ctx.fillStyle=’#333’;ctx.fillRect(s.x-16,s.y+20,32,4);
+ctx.fillStyle=’#e74c3c’;ctx.fillRect(s.x-16,s.y+20,32*(s.hp/s.maxHp),4);}
+});
+trumpTariffProj.forEach(p=>{
+ctx.fillStyle=p.reciprocal?’#ff6600’:’#e74c3c’;ctx.beginPath();ctx.arc(p.x,p.y,7,0,Math.PI*2);ctx.fill();
+drawText(p.reciprocal?‘↺’:’$’,p.x,p.y,8,’#fff’);
+});
+trumpICEProj.forEach(p=>{
+ctx.fillStyle=’#3498db’;ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);ctx.fill();
+drawText(‘ICE’,p.x,p.y,6,’#fff’);
+if(Math.sin(animT*20)>0)drawGlow(p.x,p.y,16,‘rgba(255,0,0,0.3)’);
+else drawGlow(p.x,p.y,16,‘rgba(0,0,255,0.3)’);
+});
+reporters.forEach(r=>drawReporter(r));
+supremeCourt.forEach(sc=>drawSupremeCourt(sc));
+drawTrump(trump.x,trump.y,trump.size);
+
+if(piggyMode){ctx.globalAlpha=0.3+Math.sin(animT*10)*0.2;
+drawText(‘🐷 QUIET PIGGY MODE 🐷’,W/2,H/2-40,Math.min(22,W*0.055),’#f39c12’);ctx.globalAlpha=1;}
+
+trumpParticles.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);ctx.globalAlpha=1;});
+
+drawTrumpButtons();
+
+// HUD
+ctx.fillStyle=‘rgba(0,0,0,0.7)’; ctx.fillRect(0,0,W,54);
+drawText(‘🇺🇸 TRUMP’,8,14,Math.min(14,W*0.035),’#f1c40f’,‘left’);
+drawText(`Score: ${trumpScore.toLocaleString()}`,8,34,Math.min(12,W*0.03),’#fff’,‘left’);
+drawText(`Wave ${trumpWave}`,8,48,Math.min(10,W*0.025),’#aaa’,‘left’);
+
+// Approval bar
+const bx2=W*0.3, bw2=W*0.4;
+drawText(‘APPROVAL’,bx2+bw2/2,12,10,’#aaa’);
+ctx.fillStyle=’#333’;ctx.fillRect(bx2,20,bw2,12);
+const ac=approvalRating>60?’#2ecc71’:approvalRating>30?’#f39c12’:’#e74c3c’;
+ctx.fillStyle=ac;ctx.fillRect(bx2,20,bw2*(approvalRating/100),12);
+drawText(`${Math.round(approvalRating)}%`,bx2+bw2/2,26,9,’#fff’);
+
+// Energy bar
+ctx.fillStyle=’#333’;ctx.fillRect(bx2,36,bw2,8);
+ctx.fillStyle=’#3498db’;ctx.fillRect(bx2,36,bw2*(trumpEnergy/100),8);
+drawText(‘ENERGY’,bx2+bw2/2,48,8,’#888’);
+
+// Piggy cooldown in HUD
+if(quietPiggyCooldown>0) drawText(`🐷 ${quietPiggyCooldown.toFixed(1)}s`,W-60,14,10,’#f39c12’);
+else drawText(‘🐷 READY’,W-55,14,10,’#2ecc71’);
+if(reciprocalOn) drawText(‘↺ RECIP ON’,W-60,32,10,’#ff6600’);
+
+// Crosshair at aim point
+if(aimTouch.active){
+ctx.strokeStyle=‘rgba(255,255,255,0.5)’;ctx.lineWidth=1;
+ctx.beginPath();ctx.arc(aimTouch.x,aimTouch.y,12,0,Math.PI*2);ctx.stroke();
+ctx.beginPath();ctx.moveTo(aimTouch.x-16,aimTouch.y);ctx.lineTo(aimTouch.x+16,aimTouch.y);
+ctx.moveTo(aimTouch.x,aimTouch.y-16);ctx.lineTo(aimTouch.x,aimTouch.y+16);ctx.stroke();
+}
+
+if(trumpQuoteTimer>0&&trumpCurrentQuote){
+const a=Math.min(1,trumpQuoteTimer);ctx.globalAlpha=a;
+ctx.fillStyle=‘rgba(0,0,0,0.8)’;ctx.font=`bold ${Math.min(14,W*0.035)}px sans-serif`;
+const tw2=ctx.measureText(`"${trumpCurrentQuote}"`).width+24;
+roundRect(ctx,W/2-tw2/2,56,tw2,26,6);ctx.fill();
+drawText(`"${trumpCurrentQuote}"`,W/2,69,Math.min(14,W*0.035),’#f1c40f’);ctx.globalAlpha=1;
+}
+}
+
+function drawShipDead() {
+drawOcean();
+ctx.fillStyle=‘rgba(0,0,0,0.75)’; ctx.fillRect(0,H*0.2,W,H*0.5);
+drawOutline(‘TRADE BLOCKED!’,W/2,H*0.28,Math.min(36,W*0.09),’#e74c3c’,’#000’);
+if(currentQuote.includes(‘ICE’)){
+drawText(‘🚨 DEPORTED BY ICE! 🚨’,W/2,H*0.38,Math.min(18,W*0.045),’#ff6600’);
+drawText(“Faster than Kittle’s 40, but not enough.”,W/2,H*0.45,Math.min(12,W*0.03),’#aaa’);
+} else {
+drawText(‘Overwhelmed by tariffs!’,W/2,H*0.38,Math.min(16,W*0.04),’#aaa’);
+drawText(“Even Kittle couldn’t break that many tackles.”,W/2,H*0.45,Math.min(12,W*0.03),’#aaa’);
+}
+drawText(`${selectedCountry?.flag||''} ${companyName} — $${shipScore.toLocaleString()}`,W/2,H*0.53,Math.min(16,W*0.04),’#f1c40f’);
+drawText(`🏆 Best: $${highScoreShip.toLocaleString()}`,W/2,H*0.6,Math.min(14,W*0.035),’#3498db’);
+if(Math.sin(animT*4)>0) drawText(’[ TAP TO CONTINUE ]’,W/2,H*0.68,Math.min(14,W*0.035),’#fff’);
+particles.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);ctx.globalAlpha=1;p.x+=p.vx*0.016;p.y+=p.vy*0.016;p.life-=0.016;});
+particles=particles.filter(p=>p.life>0);
+}
+
+function drawTrumpOver() {
+drawWhiteHouse();
+ctx.fillStyle=‘rgba(0,0,0,0.75)’; ctx.fillRect(0,H*0.2,W,H*0.5);
+drawOutline(‘IMPEACHED!’,W/2,H*0.28,Math.min(40,W*0.1),’#e74c3c’,’#000’);
+drawText(‘Approval rating hit 0%!’,W/2,H*0.38,Math.min(18,W*0.045),’#aaa’);
+drawText(“Even Kittle’s approval never dropped that low.”,W/2,H*0.45,Math.min(12,W*0.03),’#888’);
+drawText(`Score: ${trumpScore.toLocaleString()}`,W/2,H*0.53,Math.min(20,W*0.05),’#f1c40f’);
+drawText(`Waves: ${trumpWave}  |  🏆 Best: ${highScoreTrump.toLocaleString()}`,W/2,H*0.6,Math.min(14,W*0.035),’#3498db’);
+if(Math.sin(animT*4)>0) drawText(’[ TAP TO CONTINUE ]’,W/2,H*0.68,Math.min(14,W*0.035),’#fff’);
+trumpParticles.forEach(p=>{ctx.globalAlpha=p.life;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);ctx.globalAlpha=1;p.x+=p.vx*0.016;p.y+=p.vy*0.016;p.life-=0.016;});
+trumpParticles=trumpParticles.filter(p=>p.life>0);
+}
+
+// ── MAIN LOOP ──────────────────────────────────────────────────
+let last = 0;
+function loop(ts) {
+const dt = Math.min((ts - last) / 1000, 0.05);
+last = ts;
+animT += dt;
+ctx.clearRect(0, 0, W, H);
+switch(scene) {
+case SC.TITLE: drawTitle(); break;
+case SC.MODE_SELECT: drawModeSelect(); break;
+case SC.SHIP_SETUP: drawShipSetup(); break;
+case SC.COUNTRY_SELECT: drawCountrySelect(); break;
+case SC.SHIP_GAME: updateShipMode(dt); drawShipMode(); break;
+case SC.SHIP_DEAD: drawShipDead(); break;
+case SC.TRUMP_GAME: updateTrumpMode(dt); drawTrumpMode(); break;
+case SC.TRUMP_OVER: drawTrumpOver(); break;
+}
+requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
